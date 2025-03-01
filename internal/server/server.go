@@ -10,11 +10,13 @@ import (
 // Server represents the HTTP server
 type Server struct {
 	server *http.Server
+	Addr   string
 }
 
 // NewServer creates a new HTTP server
 func NewServer(config config.ServerConfig, handler http.Handler) *Server {
 	return &Server{
+		Addr: config.Addr,
 		server: &http.Server{
 			Addr:         config.Addr,
 			Handler:      handler,

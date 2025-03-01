@@ -25,6 +25,10 @@ func NewHandler(service service.Service, logger *log.Logger) *Handler {
 	}
 }
 
+func ProvideHttpHandler(handler *Handler) http.Handler {
+	return handler.Routes()
+}
+
 // Routes returns the router with all routes
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()

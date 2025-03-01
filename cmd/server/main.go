@@ -8,88 +8,104 @@ import (
 	"best-structure-example/internal/server"
 	"best-structure-example/internal/service"
 	"context"
+	"go.uber.org/fx"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 )
 
 func main() {
-	// TODO change to logrus or zap
-	// Initialize logger
+	// Configure logger
 	logger := log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile)
-	logger.Println("Starting service...")
 
-	// Load configuration
-	cfg, err := config.Load()
-	if err != nil {
-		logger.Fatalf("Failed to load configuration: %v", err)
-	}
+	// Start application with fx
+	app := fx.New(
+		// Provide dependencies
+		fx.Provide(
+			// Supply the logger
+			func() *log.Logger {
+				return logger
+			},
+			// Load configurations
+			config.NewConfig,
+			config.ProvideServerConfig,
+			config.ProvideKafkaConfig,
+			// Create repository
+			repository.NewRepository,
+			// Create Kafka producer
+			kafka.NewProducer,
+			// Create Kafka consumer
+			kafka.NewConsumer,
+			// Create service
+			service.NewService,
+			// Create HTTP handler
+			handler.NewHandler,
+			handler.ProvideHttpHandler,
+			// Create HTTP server
+			server.NewServer,
+		),
+		// Register lifecycle hooks
+		fx.Invoke(registerHooks),
+	)
 
-	// Create repository
-	repo := repository.NewRepository(logger)
+	// Start the application
+	app.Run()
+}
 
-	// Initialize Kafka producer
-	kafkaProducer, err := kafka.NewProducer(cfg.Kafka)
-	if err != nil {
-		logger.Fatalf("Failed to create Kafka producer: %v", err)
-	}
+// registerHooks sets up the application lifecycle hooks
+func registerHooks(
+	lc fx.Lifecycle,
+	logger *log.Logger,
+	server *server.Server,
+	consumer kafka.Consumer,
+	service service.Service,
+) {
+	// Create context for shutdown
+	_, cancel := context.WithCancel(context.Background())
 
-	// Initialize Kafka consumer
-	kafkaConsumer, err := kafka.NewConsumer(cfg.Kafka, logger)
-	if err != nil {
-		logger.Fatalf("Failed to create Kafka consumer: %v", err)
-	}
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			// Start Kafka consumer
+			logger.Println("Starting Kafka consumer...")
+			if err := consumer.Start(ctx, service.ProcessMessage); err != nil {
+				return err
+			}
 
-	// Initialize service layer
-	svc := service.NewService(repo, kafkaProducer, logger)
+			// Start HTTP server
+			logger.Printf("Starting HTTP server on %s", server.Addr)
+			go func() {
+				if err := server.Start(); err != nil {
+					logger.Printf("Server error: %v", err)
+				}
+			}()
 
-	// Initialize HTTP handlers
-	handlers := handler.NewHandler(svc, logger)
+			// Handle shutdown signals
+			go func() {
+				sigCh := make(chan os.Signal, 1)
+				signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+				sig := <-sigCh
+				logger.Printf("Received signal: %s", sig)
+				cancel()
+			}()
 
-	// Initialize HTTP server
-	srv := server.NewServer(cfg.Server, handlers.Routes())
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			logger.Println("Shutting down application...")
 
-	// Start Kafka consumer
-	go func() {
-		if err := kafkaConsumer.Start(context.Background(), svc.ProcessMessage); err != nil {
-			logger.Fatalf("Failed to start Kafka consumer: %v", err)
-		}
-	}()
+			// Shutdown HTTP server
+			if err := server.Shutdown(ctx); err != nil {
+				logger.Printf("Server shutdown error: %v", err)
+			}
 
-	// Start HTTP server in a goroutine
-	go func() {
-		logger.Printf("Starting HTTP server on %s", cfg.Server.Addr)
-		if err := srv.Start(); err != nil {
-			logger.Fatalf("Failed to start server: %v", err)
-		}
-	}()
+			// Stop Kafka consumer
+			if err := consumer.Stop(); err != nil {
+				logger.Printf("Consumer shutdown error: %v", err)
+			}
 
-	// Wait for interrupt signal to gracefully shut down the server
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	logger.Println("Shutting down server...")
-
-	// Create a deadline to wait for
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Shutdown server
-	if err := srv.Shutdown(ctx); err != nil {
-		logger.Fatalf("Server forced to shutdown: %v", err)
-	}
-
-	// Stop Kafka consumer
-	if err := kafkaConsumer.Stop(); err != nil {
-		logger.Fatalf("Failed to stop Kafka consumer: %v", err)
-	}
-
-	// Close Kafka producer
-	if err := kafkaProducer.Close(); err != nil {
-		logger.Fatalf("Failed to close Kafka producer: %v", err)
-	}
-
-	logger.Println("Server exited properly")
+			logger.Println("Application stopped")
+			return nil
+		},
+	})
 }

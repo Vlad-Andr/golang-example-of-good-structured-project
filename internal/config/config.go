@@ -27,7 +27,8 @@ type KafkaConfig struct {
 	Topic         string   `envconfig:"KAFKA_TOPIC" default:"example-topic"`
 }
 
-func Load() (*Config, error) {
+// NewConfig loads configuration from environment variables
+func NewConfig() (*Config, error) {
 	// Load .env file and set environment variables
 	if err := godotenv.Load("internal/config/.env"); err != nil {
 		log.Println("No .env file found")
@@ -39,4 +40,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func ProvideServerConfig(cfg *Config) ServerConfig {
+	return cfg.Server
+}
+
+func ProvideKafkaConfig(cfg *Config) KafkaConfig {
+	return cfg.Kafka
 }
