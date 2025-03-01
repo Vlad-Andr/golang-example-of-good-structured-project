@@ -23,5 +23,7 @@ go.work.sum
 
 # env file
 .env
+/go.sum
 
+# IDEs
 .idea
