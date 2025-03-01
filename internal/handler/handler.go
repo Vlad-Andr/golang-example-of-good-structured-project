@@ -43,7 +43,7 @@ func (h *Handler) Routes() http.Handler {
 	r.Get("/health", h.healthCheck)
 
 	r.Route("/api/v1/items", func(r chi.Router) {
-		r.Get("/", h.listItems)
+		r.Get("/", h.ListItems)
 		r.Post("/", h.createItem)
 		r.Get("/{id}", h.getItem)
 	})
@@ -90,7 +90,7 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	h.respondWithJSON(w, http.StatusOK, item)
 }
 
-func (h *Handler) listItems(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	items, err := h.service.ListItems()
 	if err != nil {
 		h.respondWithError(w, http.StatusInternalServerError, "Failed to list items")
